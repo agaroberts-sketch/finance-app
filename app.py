@@ -184,8 +184,8 @@ metric_columns[1].metric("Columns", f"{len(data.columns):,}")
 metric_columns[2].metric("Numeric fields", f"{len(numeric_columns):,}")
 metric_columns[3].metric("Missing values", f"{int(data.isna().sum().sum()):,}")
 
-tab_summary, tab_data, tab_quality, tab_chat = st.tabs(
-    ["Summary", "Data table", "Data quality", "AI chat"]
+tab_summary, tab_data, tab_quality, tab_exceptions, tab_chat = st.tabs(
+    ["Summary", "Data table", "Data quality", "Data exceptions", "AI chat"]
 )
 
 with tab_summary:
@@ -234,6 +234,57 @@ with tab_quality:
         }
     )
     st.dataframe(quality, use_container_width=True, hide_index=True)
+
+with tab_exceptions:
+    st.markdown('<div class="section-kicker">Statistical review</div><h3>Data outliers</h3>', unsafe_allow_html=True)
+    st.caption("Only statistical outliers are shown. Your source data is not changed.")
+    st.info(
+        "How this works: for every numeric column with at least 8 non-empty values, "
+        "the app calculates the 1st and 99th percentiles. A value is flagged when it "
+        "falls below the 1st percentile or above the 99th percentile. These are signals "
+        "for review, not proof that a value is incorrect."
+    )
+
+    exception_frames = []
+    threshold_rows = []
+
+    for column in numeric_columns:
+        values = data[column].dropna()
+        if len(values) >= 8:
+            lower = values.quantile(0.01)
+            upper = values.quantile(0.99)
+            threshold_rows.append({"Column": column, "Lower threshold": lower, "Upper threshold": upper})
+            outlier_rows = data[(data[column] < lower) | (data[column] > upper)].copy()
+            if not outlier_rows.empty:
+                outlier_rows.insert(0, "Row", outlier_rows.index)
+                outlier_rows["Column"] = column
+                outlier_rows["Issue"] = "Statistical outlier"
+                outlier_rows["Value"] = outlier_rows[column]
+                exception_frames.append(outlier_rows[["Row", "Column", "Issue", "Value"]])
+
+    exception_columns = ["Row", "Column", "Issue", "Value"]
+    exceptions = pd.concat(exception_frames, ignore_index=True) if exception_frames else pd.DataFrame(columns=exception_columns)
+    exceptions = exceptions.reindex(columns=exception_columns)
+
+    exception_metrics = st.columns(3)
+    exception_metrics[0].metric("Outliers", f"{len(exceptions):,}")
+    exception_metrics[1].metric("Rows affected", f"{exceptions['Row'].nunique():,}")
+    exception_metrics[2].metric("Numeric fields checked", f"{len(threshold_rows):,}")
+
+    if exceptions.empty:
+        st.success("No statistical outliers were detected by the current checks.")
+    else:
+        st.dataframe(exceptions, use_container_width=True, hide_index=True)
+        st.download_button(
+            "Download outliers as CSV",
+            exceptions.to_csv(index=False).encode("utf-8"),
+            file_name=f"{sheet_name}_outliers.csv",
+            mime="text/csv",
+        )
+
+    if threshold_rows:
+        st.markdown("#### Statistical thresholds used")
+        st.dataframe(pd.DataFrame(threshold_rows), use_container_width=True, hide_index=True)
 
 with tab_chat:
     st.markdown('<div class="section-kicker">Ask the workbook</div><h3>AI data guide</h3>', unsafe_allow_html=True)
